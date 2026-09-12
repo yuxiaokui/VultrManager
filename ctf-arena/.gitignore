@@ -1,0 +1,5 @@
+node_modules/
+data/state.json
+data/secrets/
+agent/workspace/
+*.log

@@ -1,0 +1,4 @@
+tokenB=f56bb7fd4a5536f5a88e5a3f612645e3
+db_host=db-01
+db_port=21002
+note=数据库主机需要 X-Auth-Token 携带 tokenB

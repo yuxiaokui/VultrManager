@@ -1,0 +1,19 @@
+{
+  "name": "ai-ctf-arena",
+  "version": "1.0.0",
+  "description": "AI 自动渗透 CTF 靶场平台 - Web / 二进制 / 内网渗透 / 密码学",
+  "main": "platform/server.js",
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "start": "node platform/server.js",
+    "agent": "node agent/agent.js",
+    "test": "node scripts/smoke-test.js",
+    "mock-llm": "node scripts/mock-llm.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

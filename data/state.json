@@ -1,0 +1,75 @@
+{
+  "challenges": {
+    "web-sqli": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.895Z"
+    },
+    "web-jwt": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.920Z"
+    },
+    "web-ssrf": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.929Z"
+    },
+    "web-traversal": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.933Z"
+    },
+    "crypto-caesar": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.937Z"
+    },
+    "crypto-xor": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.942Z"
+    },
+    "crypto-hash": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.303Z"
+    },
+    "crypto-subst": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.312Z"
+    },
+    "web-cmdi": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.911Z"
+    },
+    "crypto-rsa": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:23.946Z"
+    },
+    "bin-overflow": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.373Z"
+    },
+    "bin-format": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.382Z"
+    },
+    "bin-crackme": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.389Z"
+    },
+    "net-pivot": {
+      "solved": true,
+      "attempts": 0,
+      "solvedAt": "2026-09-12T09:54:24.413Z"
+    }
+  },
+  "submissions": []
+}
