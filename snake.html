@@ -64,6 +64,18 @@
   }
   .btn:hover { background: #6ee7a0; }
   .btn:active { transform: scale(.96); }
+  .btn.ghost {
+    margin-top: 0;
+    background: transparent;
+    color: #4ade80;
+    box-shadow: inset 0 0 0 2px #0f3460;
+  }
+  .btn.ghost:hover { background: rgba(74,222,128,.1); }
+  .btn.ghost.on {
+    background: #4ade80;
+    color: #0a0f1e;
+    box-shadow: none;
+  }
   .hint { font-size: 13px; color: #6b7280; }
   .mobile-pad {
     display: none;
@@ -100,11 +112,12 @@
     <canvas id="game" width="400" height="400"></canvas>
     <div class="overlay" id="overlay">
       <h2 id="ov-title">准备开始</h2>
-      <p id="ov-text">方向键 / WASD 控制移动<br>吃到食物得分，撞墙或撞到自己结束</p>
+      <p id="ov-text">方向键 / WASD 控制移动<br>吃到食物得分，撞墙或撞到自己结束<br>也可开启下方「自动模式」让蛇自己吃豆</p>
       <button class="btn" id="start-btn">开始游戏</button>
     </div>
   </div>
   <p class="hint">空格键暂停 / 继续</p>
+  <button class="btn ghost" id="auto-btn">自动模式：关</button>
   <div class="mobile-pad">
     <button id="pad-up">▲</button>
     <button id="pad-left">◀</button>
@@ -122,6 +135,7 @@
   const ovTitle = document.getElementById('ov-title');
   const ovText = document.getElementById('ov-text');
   const startBtn = document.getElementById('start-btn');
+  const autoBtn = document.getElementById('auto-btn');
 
   const CELL = 20;
   const COLS = canvas.width / CELL;
@@ -129,16 +143,30 @@
 
   let snake, dir, nextDir, food, score, best, speed, acc, lastTime;
   let state = 'ready'; // ready | running | paused | over
+  let auto = false;    // 自动模式开关
+
+  const DIRS = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+  const kk = (x, y) => x + ',' + y;
+
+  // 每秒移动格数：自动模式节奏更快
+  function speedFor(sc) {
+    const base = auto ? 15 : 8;
+    const cap = auto ? 40 : 20;
+    return Math.min(base + Math.floor(sc / 50), cap);
+  }
 
   best = Number(localStorage.getItem('snake-best') || 0);
   bestEl.textContent = best;
 
   function reset() {
-    snake = [{ x: 5, y: 10 }, { x: 4, y: 10 }, { x: 3, y: 10 }];
-    dir = { x: 1, y: 0 };
-    nextDir = { x: 1, y: 0 };
+    // 初始蛇身放在哈密顿回路上，这样开启自动模式时 AI 可以直接沿回路运行
+    const i0 = 2;
+    snake = [CYCLE[i0], CYCLE[i0 - 1], CYCLE[i0 - 2]].map(c => ({ x: c.x, y: c.y }));
+    const nxt = CYCLE[(i0 + 1) % LEN];
+    dir = { x: nxt.x - snake[0].x, y: nxt.y - snake[0].y };
+    nextDir = { x: dir.x, y: dir.y };
     score = 0;
-    speed = 8;           // 每秒移动格数
+    speed = speedFor(0);
     acc = 0;
     lastTime = 0;
     scoreEl.textContent = 0;
@@ -152,7 +180,9 @@
         if (!snake.some(s => s.x === x && s.y === y)) empty.push({ x, y });
       }
     }
+    if (!empty.length) { food = null; return false; } // 蛇填满棋盘，胜利
     food = empty[Math.floor(Math.random() * empty.length)];
+    return true;
   }
 
   function draw() {
@@ -169,10 +199,12 @@
     }
 
     // 食物
-    ctx.fillStyle = '#ff5c5c';
-    ctx.beginPath();
-    ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 2, 0, Math.PI * 2);
-    ctx.fill();
+    if (food) {
+      ctx.fillStyle = '#ff5c5c';
+      ctx.beginPath();
+      ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // 蛇
     snake.forEach((s, i) => {
@@ -194,6 +226,78 @@
     ctx.closePath();
   }
 
+  // ---- 自动模式：哈密顿回路 + 安全抄近路 ----
+  // 构造一条覆盖全部格子的回路（要求 ROWS 为偶数），蛇沿回路前进就绝不会自撞
+  function buildCycle() {
+    const cyc = [];
+    for (let x = 0; x < COLS; x++) cyc.push({ x, y: 0 });
+    for (let y = 1; y < ROWS; y++) {
+      if (y % 2 === 1) for (let x = COLS - 1; x >= 1; x--) cyc.push({ x, y });
+      else            for (let x = 1; x <= COLS - 1; x++) cyc.push({ x, y });
+    }
+    cyc.push({ x: 0, y: ROWS - 1 });
+    for (let y = ROWS - 2; y >= 1; y--) cyc.push({ x: 0, y });
+    return cyc;
+  }
+  const CYCLE = buildCycle();
+  const LEN = CYCLE.length;
+  const CIDX = new Map();
+  CYCLE.forEach((c, i) => CIDX.set(kk(c.x, c.y), i));
+  const cdist = (a, b) => ((b - a) % LEN + LEN) % LEN; // 沿回路前向距离
+
+  // 默认沿回路走；当食物在前方且能安全抄近路时，走更短的捷径
+  function chooseDirection() {
+    const head = snake[0];
+    const headIdx = CIDX.get(kk(head.x, head.y));
+    const tail = snake[snake.length - 1];
+    const tailIdx = CIDX.get(kk(tail.x, tail.y));
+    const foodIdx = food ? CIDX.get(kk(food.x, food.y)) : -1;
+    const len = snake.length;
+    const gap = cdist(headIdx, tailIdx); // 头 -> 尾 的前向距离
+
+    const body = new Set();
+    for (let i = 0; i < snake.length - 1; i++) body.add(kk(snake[i].x, snake[i].y));
+
+    const cands = [];
+    // 兜底：回路下一格（只要没被身体占据就一定安全）
+    const defIdx = (headIdx + 1) % LEN, defCell = CYCLE[defIdx];
+    if (!body.has(kk(defCell.x, defCell.y))) {
+      cands.push({ ci: defIdx, dir: { x: defCell.x - head.x, y: defCell.y - head.y } });
+    }
+    // 抄近路：只能落在“头 -> 尾”这段前向弧内，且与尾巴保持足够距离
+    for (const d of DIRS) {
+      const nx = head.x + d.x, ny = head.y + d.y;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+      const ni = CIDX.get(kk(nx, ny));
+      if (ni === undefined || ni === defIdx || body.has(kk(nx, ny))) continue;
+      const jump = cdist(headIdx, ni);
+      if (jump <= 0 || jump >= gap) continue;   // 不能后退，也不能越过尾巴
+      if (cdist(ni, tailIdx) <= len) continue;  // 与尾巴的安全距离
+      cands.push({ ci: ni, dir: d });
+    }
+
+    if (!cands.length) {
+      // 兜底（如手动玩到一半再切自动）：任选一个不撞身体的方向
+      for (const d of DIRS) {
+        const nx = head.x + d.x, ny = head.y + d.y;
+        if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+        let hit = false;
+        for (let i = 0; i < snake.length - 1; i++) {
+          if (snake[i].x === nx && snake[i].y === ny) { hit = true; break; }
+        }
+        if (!hit) return d;
+      }
+      return dir;
+    }
+
+    let best = cands[0], bs = foodIdx >= 0 ? cdist(best.ci, foodIdx) : 0;
+    for (const c of cands) {
+      const s = foodIdx >= 0 ? cdist(c.ci, foodIdx) : 0;
+      if (s < bs) { bs = s; best = c; }
+    }
+    return best.dir;
+  }
+
   function step() {
     dir = nextDir;
     const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
@@ -207,16 +311,16 @@
 
     snake.unshift(head);
 
-    if (head.x === food.x && head.y === food.y) {
+    if (food && head.x === food.x && head.y === food.y) {
       score += 10;
       scoreEl.textContent = score;
-      speed = Math.min(8 + Math.floor(score / 50), 20);
-      placeFood();
+      speed = speedFor(score);
       if (score > best) {
         best = score;
         bestEl.textContent = best;
         localStorage.setItem('snake-best', best);
       }
+      if (!placeFood()) return win();
     } else {
       snake.pop();
     }
@@ -230,12 +334,22 @@
     acc += dt;
     const interval = 1 / speed;
     while (acc >= interval) {
+      if (auto) nextDir = chooseDirection();
       step();
       acc -= interval;
       if (state !== 'running') break;
     }
     draw();
     if (state === 'running') requestAnimationFrame(loop);
+  }
+
+  function win() {
+    state = 'over';
+    ovTitle.textContent = '恭喜通关！';
+    ovText.innerHTML = `蛇填满了整个棋盘 🐍<br>得分 <b style="color:#4ade80">${score}</b>`;
+    startBtn.textContent = '再来一局';
+    overlay.classList.remove('hidden');
+    draw();
   }
 
   function gameOver() {
@@ -293,7 +407,7 @@
     const k = KEYS[e.key];
     if (!k) return;
     e.preventDefault();
-    if (state === 'ready' || state === 'over') return;
+    if (auto || state === 'ready' || state === 'over') return;
     turn(k[0], k[1]);
   });
 
@@ -302,11 +416,25 @@
     else start();
   });
 
+  // 自动模式开关
+  function updateAutoBtn() {
+    autoBtn.textContent = '自动模式：' + (auto ? '开' : '关');
+    autoBtn.classList.toggle('on', auto);
+  }
+  autoBtn.addEventListener('click', () => {
+    auto = !auto;
+    updateAutoBtn();
+    // 开启自动模式时重开一局，让蛇身落在回路的起跑位置
+    if (auto) start();
+  });
+  updateAutoBtn();
+
   // 移动端方向键
   [['pad-up', 0, -1], ['pad-down', 0, 1], ['pad-left', -1, 0], ['pad-right', 1, 0]]
     .forEach(([id, x, y]) => {
       const el = document.getElementById(id);
       el.addEventListener('click', () => {
+        if (auto) return;
         if (state === 'running') turn(x, y);
         else if (state === 'ready' || state === 'over') start();
       });
@@ -320,6 +448,7 @@
   canvas.addEventListener('touchend', e => {
     const dx = e.changedTouches[0].clientX - tx;
     const dy = e.changedTouches[0].clientY - ty;
+    if (auto) return;
     if (Math.abs(dx) < 20 && Math.abs(dy) < 20) return;
     if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0);
     else turn(0, dy > 0 ? 1 : -1);
