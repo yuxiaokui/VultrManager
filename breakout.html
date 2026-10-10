@@ -130,6 +130,9 @@
   const PADDLE = { w: 110, h: 14, y: H - 42, speed: 620 };
   const BALL = { r: 8, baseSpeed: 340, maxSpeed: 620 };
   const BRICK = { rows: 6, cols: 9, h: 24, gap: 6, top: 70, sideMargin: 34 };
+  const POWERUP = { size: 26, speed: 150 };
+  const MAX_BALLS = 9;
+  const DROP_COUNT = 3; // 每关固定有这么多块砖会掉落道具
 
   const ROW_COLORS = [
     ['#ff6b8a', '#ff3d68'],
@@ -149,10 +152,10 @@
     level: 1,
     paddleX: (W - PADDLE.w) / 2,
     keys: { left: false, right: false },
-    ball: { x: W / 2, y: PADDLE.y - BALL.r - 1, r: BALL.r, vx: 0, vy: 0, speed: BALL.baseSpeed, stuck: true },
+    balls: [],
     bricks: [],
     particles: [],
-    trail: [],
+    powerups: [],
   };
 
   // ---------- 关卡 ----------
@@ -176,6 +179,15 @@
         });
       }
     }
+    // 随机挑几块砖携带道具（分裂小球）
+    const idx = b.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    for (let k = 0; k < Math.min(DROP_COUNT, idx.length); k++) {
+      b[idx[k]].hasPowerup = true;
+    }
     state.bricks = b;
   }
 
@@ -184,16 +196,22 @@
   }
 
   // ---------- 生命周期 ----------
+  function makeBall() {
+    return {
+      x: state.paddleX + PADDLE.w / 2,
+      y: PADDLE.y - BALL.r - 1,
+      r: BALL.r,
+      vx: 0, vy: 0,
+      speed: Math.min(BALL.baseSpeed + (state.level - 1) * 30, BALL.maxSpeed),
+      stuck: true,
+      trail: [],
+    };
+  }
+
   function resetBall() {
-    const p = state.paddleX + PADDLE.w / 2;
-    const ball = state.ball;
-    ball.x = p;
-    ball.y = PADDLE.y - BALL.r - 1;
-    ball.vx = 0; ball.vy = 0;
-    ball.speed = Math.min(BALL.baseSpeed + (state.level - 1) * 30, BALL.maxSpeed);
-    ball.stuck = true;
+    state.balls = [makeBall()];
+    state.powerups.length = 0;
     state.launched = false;
-    state.trail.length = 0;
   }
 
   function startLevel() {
@@ -228,11 +246,13 @@
 
   function launchBall() {
     if (!state.running || state.paused || state.launched) return;
-    const ball = state.ball;
-    const angle = (-60 + Math.random() * 120) * Math.PI / 180; // 向上随机角度
-    ball.vx = Math.sin(angle) * ball.speed;
-    ball.vy = -Math.abs(Math.cos(angle) * ball.speed);
-    ball.stuck = false;
+    for (const ball of state.balls) {
+      if (!ball.stuck) continue;
+      const angle = (-60 + Math.random() * 120) * Math.PI / 180; // 向上随机角度
+      ball.vx = Math.sin(angle) * ball.speed;
+      ball.vy = -Math.abs(Math.cos(angle) * ball.speed);
+      ball.stuck = false;
+    }
     state.launched = true;
   }
 
@@ -270,8 +290,7 @@
   }
 
   // ---------- 物理 ----------
-  function bounceBallOffPaddle() {
-    const ball = state.ball;
+  function bounceBallOffPaddle(ball) {
     // 根据击打位置决定反弹角度（打挡板边缘角度更斜）
     const rel = (ball.x - (state.paddleX + PADDLE.w / 2)) / (PADDLE.w / 2);
     const clamped = Math.max(-1, Math.min(1, rel));
@@ -289,15 +308,62 @@
       state.score += brick.solid ? 20 : 10;
       updateHUD();
       spawnParticles(brick);
+      // 这块砖带有道具 —— 掉落一个「分裂小球」
+      if (brick.hasPowerup) {
+        spawnPowerup(brick);
+        brick.hasPowerup = false;
+      }
     } else {
       state.score += 5;
       updateHUD();
     }
   }
 
+  function spawnPowerup(brick) {
+    state.powerups.push({
+      x: brick.x + brick.w / 2,
+      y: brick.y + brick.h / 2,
+      w: POWERUP.size, h: POWERUP.size,
+      vy: POWERUP.speed,
+      rot: 0,
+      life: 1,
+    });
+  }
+
+  // 接到分裂道具：每个小球再分裂出两个小球
+  function applySplit() {
+    const sources = state.balls.slice();
+    for (const b of sources) {
+      if (state.balls.length >= MAX_BALLS) break;
+      const baseAngle = (b.vx === 0 && b.vy === 0) ? -Math.PI / 2 : Math.atan2(b.vy, b.vx);
+      const speed = Math.max(b.speed, BALL.baseSpeed);
+      for (const sign of [-1, 1]) {
+        if (state.balls.length >= MAX_BALLS) break;
+        const ang = baseAngle + sign * 0.45;
+        const nb = makeBall();
+        nb.x = b.x; nb.y = b.y;
+        nb.stuck = false;
+        nb.speed = speed;
+        nb.vx = Math.cos(ang) * speed;
+        nb.vy = Math.sin(ang) * speed;
+        state.balls.push(nb);
+      }
+    }
+  }
+
+  function spawnPickupFx(x, y) {
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 60 + Math.random() * 200;
+      state.particles.push({
+        x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60,
+        life: 1, size: 2 + Math.random() * 3, color: '#7dffb0',
+      });
+    }
+  }
+
   // AABB vs 圆 —— 带最小分离轴的反弹
-  function resolveBrickCollision(brick) {
-    const ball = state.ball;
+  function resolveBrickCollision(ball, brick) {
     // 找圆心到矩形的最近点
     const cx = Math.max(brick.x, Math.min(ball.x, brick.x + brick.w));
     const cy = Math.max(brick.y, Math.min(ball.y, brick.y + brick.h));
@@ -338,19 +404,23 @@
   }
 
   function update(dt) {
-    const ball = state.ball;
-
     // 挡板键盘控制
     if (state.keys.left) state.paddleX -= PADDLE.speed * dt;
     if (state.keys.right) state.paddleX += PADDLE.speed * dt;
     state.paddleX = Math.max(0, Math.min(W - PADDLE.w, state.paddleX));
 
-    if (ball.stuck) {
-      ball.x = state.paddleX + PADDLE.w / 2;
-      ball.y = PADDLE.y - ball.r - 1;
-    } else {
+    // 逐个小球处理
+    for (let bi = state.balls.length - 1; bi >= 0; bi--) {
+      const ball = state.balls[bi];
+
+      if (ball.stuck) {
+        ball.x = state.paddleX + PADDLE.w / 2;
+        ball.y = PADDLE.y - ball.r - 1;
+        continue;
+      }
+
       // 分步移动，避免高速穿透
-      const steps = Math.max(1, Math.ceil((ball.speed * dt) / (ball.r)));
+      const steps = Math.max(1, Math.ceil((ball.speed * dt) / ball.r));
       const sdt = dt / steps;
       for (let i = 0; i < steps; i++) {
         ball.x += ball.vx * sdt;
@@ -368,31 +438,50 @@
             ball.y - ball.r <= PADDLE.y + PADDLE.h &&
             ball.x >= state.paddleX - ball.r &&
             ball.x <= state.paddleX + PADDLE.w + ball.r) {
-          bounceBallOffPaddle();
+          bounceBallOffPaddle(ball);
         }
 
         // 砖块
         for (const b of state.bricks) {
           if (!b.alive) continue;
-          if (resolveBrickCollision(b)) {
+          if (resolveBrickCollision(ball, b)) {
             hitBrick(b);
             break; // 每小步只处理一次碰撞
           }
         }
       }
 
-      // 掉出底部
-      if (ball.y - ball.r > H) {
-        loseLife();
-      }
-
       // 拖尾
-      state.trail.push({ x: ball.x, y: ball.y });
-      if (state.trail.length > 14) state.trail.shift();
+      ball.trail.push({ x: ball.x, y: ball.y });
+      if (ball.trail.length > 14) ball.trail.shift();
 
-      // 通关判定
-      if (state.running && remainingBricks() === 0) {
-        nextLevel();
+      // 掉出底部 —— 移除该球
+      if (ball.y - ball.r > H) {
+        state.balls.splice(bi, 1);
+      }
+    }
+
+    // 所有小球都掉光才算漏球扣命
+    if (state.launched && state.balls.length === 0) {
+      loseLife();
+    }
+
+    // 道具下落 / 接住判定
+    for (let i = state.powerups.length - 1; i >= 0; i--) {
+      const p = state.powerups[i];
+      p.y += p.vy * dt;
+      p.rot += dt * 2.4;
+      const caught =
+        p.y + p.h / 2 >= PADDLE.y &&
+        p.y - p.h / 2 <= PADDLE.y + PADDLE.h &&
+        p.x >= state.paddleX - p.w / 2 &&
+        p.x <= state.paddleX + PADDLE.w + p.w / 2;
+      if (caught) {
+        applySplit();
+        spawnPickupFx(p.x, PADDLE.y);
+        state.powerups.splice(i, 1);
+      } else if (p.y - p.h / 2 > H) {
+        state.powerups.splice(i, 1);
       }
     }
 
@@ -404,6 +493,11 @@
       p.vy += 420 * dt;
       p.life -= dt * 1.6;
       if (p.life <= 0) state.particles.splice(i, 1);
+    }
+
+    // 通关判定
+    if (state.running && state.balls.length > 0 && remainingBricks() === 0) {
+      nextLevel();
     }
   }
 
@@ -449,6 +543,15 @@
         roundRect(b.x + 1.5, b.y + 1.5, b.w - 3, b.h - 3, 4);
         ctx.stroke();
       }
+
+      // 带有道具的砖 —— 闪烁绿点提示
+      if (b.hasPowerup) {
+        const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 220);
+        ctx.fillStyle = `rgba(109,255,176,${pulse})`;
+        ctx.beginPath();
+        ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // 粒子
@@ -461,14 +564,17 @@
     }
     ctx.globalAlpha = 1;
 
-    // 拖尾
-    for (let i = 0; i < state.trail.length; i++) {
-      const t = state.trail[i];
-      const a = (i / state.trail.length) * 0.35;
-      ctx.fillStyle = `rgba(150,200,255,${a})`;
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, BALL.r * (i / state.trail.length), 0, Math.PI * 2);
-      ctx.fill();
+    // 拖尾（每个小球各自一段）
+    for (const ball of state.balls) {
+      const tr = ball.trail;
+      for (let i = 0; i < tr.length; i++) {
+        const t = tr[i];
+        const a = (i / tr.length) * 0.35;
+        ctx.fillStyle = `rgba(150,200,255,${a})`;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, ball.r * (i / tr.length), 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // 挡板
@@ -482,21 +588,51 @@
     roundRect(state.paddleX + 3, PADDLE.y + 2.5, PADDLE.w - 6, 3, 2);
     ctx.fill();
 
-    // 小球
-    const ball = state.ball;
-    ctx.shadowColor = 'rgba(140,200,255,.9)';
-    ctx.shadowBlur = 18;
-    const bg = ctx.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, BALL.r);
-    bg.addColorStop(0, '#ffffff');
-    bg.addColorStop(1, '#66aaff');
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, BALL.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    // 小球（可能有多个）
+    for (const ball of state.balls) {
+      ctx.shadowColor = 'rgba(140,200,255,.9)';
+      ctx.shadowBlur = 18;
+      const bg = ctx.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, ball.r);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(1, '#66aaff');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // 道具（分裂小球）
+    for (const p of state.powerups) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.sin(p.rot) * 0.18);
+      ctx.shadowColor = 'rgba(109,255,176,.95)';
+      ctx.shadowBlur = 16;
+      const g = ctx.createLinearGradient(0, -p.h / 2, 0, p.h / 2);
+      g.addColorStop(0, '#b6ffd8');
+      g.addColorStop(1, '#19c37d');
+      ctx.fillStyle = g;
+      roundRect(-p.w / 2, -p.h / 2, p.w, p.h, 7);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,.85)';
+      ctx.lineWidth = 2;
+      roundRect(-p.w / 2 + 1.5, -p.h / 2 + 1.5, p.w - 3, p.h - 3, 6);
+      ctx.stroke();
+      // 两个小圆点，示意「分裂」
+      ctx.fillStyle = '#053b25';
+      ctx.beginPath();
+      ctx.arc(-5, 1, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(5, -3, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     // 未发球提示
-    if (ball.stuck && state.running && !state.paused) {
+    if (state.balls.some(b => b.stuck) && state.running && !state.paused) {
       ctx.fillStyle = 'rgba(200,220,255,.7)';
       ctx.font = '600 14px -apple-system, sans-serif';
       ctx.textAlign = 'center';
