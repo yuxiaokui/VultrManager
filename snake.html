@@ -77,6 +77,28 @@
     box-shadow: none;
   }
   .hint { font-size: 13px; color: #6b7280; }
+  .ai-controls {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #a0a0b0;
+  }
+  .slider input[type=range] { width: 150px; accent-color: #4ade80; cursor: pointer; }
+  .slider b {
+    color: #4ade80;
+    font-variant-numeric: tabular-nums;
+    min-width: 26px;
+    display: inline-block;
+    text-align: right;
+  }
   .mobile-pad {
     display: none;
     grid-template-columns: repeat(3, 56px);
@@ -118,6 +140,13 @@
   </div>
   <p class="hint">空格键暂停 / 继续</p>
   <button class="btn ghost" id="auto-btn">自动模式：关</button>
+  <div class="ai-controls">
+    <button class="btn ghost" id="strat-btn">策略：哈密顿</button>
+    <label class="slider">AI 速度
+      <input type="range" id="speed-range" min="5" max="60" step="1" value="15">
+      <b id="speed-val">15</b>
+    </label>
+  </div>
   <div class="mobile-pad">
     <button id="pad-up">▲</button>
     <button id="pad-left">◀</button>
@@ -136,6 +165,9 @@
   const ovText = document.getElementById('ov-text');
   const startBtn = document.getElementById('start-btn');
   const autoBtn = document.getElementById('auto-btn');
+  const stratBtn = document.getElementById('strat-btn');
+  const speedRange = document.getElementById('speed-range');
+  const speedVal = document.getElementById('speed-val');
 
   const CELL = 20;
   const COLS = canvas.width / CELL;
@@ -144,15 +176,16 @@
   let snake, dir, nextDir, food, score, best, speed, acc, lastTime;
   let state = 'ready'; // ready | running | paused | over
   let auto = false;    // 自动模式开关
+  let strategy = 'ham'; // 自动走法：'ham' 哈密顿回路 | 'greedy' 贪心寻路
+  let aiSpeed = 15;     // 自动模式基础速度（每秒格数）
 
   const DIRS = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
   const kk = (x, y) => x + ',' + y;
 
-  // 每秒移动格数：自动模式节奏更快
+  // 每秒移动格数：自动模式用滑块设定的基础速度
   function speedFor(sc) {
-    const base = auto ? 15 : 8;
-    const cap = auto ? 40 : 20;
-    return Math.min(base + Math.floor(sc / 50), cap);
+    if (auto) return Math.min(aiSpeed + Math.floor(sc / 50), 60);
+    return Math.min(8 + Math.floor(sc / 50), 20);
   }
 
   best = Number(localStorage.getItem('snake-best') || 0);
@@ -245,8 +278,8 @@
   CYCLE.forEach((c, i) => CIDX.set(kk(c.x, c.y), i));
   const cdist = (a, b) => ((b - a) % LEN + LEN) % LEN; // 沿回路前向距离
 
-  // 默认沿回路走；当食物在前方且能安全抄近路时，走更短的捷径
-  function chooseDirection() {
+  // 哈密顿策略：默认沿回路走；当食物在前方且能安全抄近路时，走更短的捷径
+  function chooseHamilton() {
     const head = snake[0];
     const headIdx = CIDX.get(kk(head.x, head.y));
     const tail = snake[snake.length - 1];
@@ -296,6 +329,88 @@
       if (s < bs) { bs = s; best = c; }
     }
     return best.dir;
+  }
+
+  // ---- 贪心策略：BFS 直奔食物，同时兼顾不与尾巴脱节、留出活动空间 ----
+  function bfs(from, to, blocked) {
+    if (from.x === to.x && from.y === to.y) return 0;
+    const seen = new Set([kk(from.x, from.y)]);
+    let frontier = [[from.x, from.y]], depth = 0;
+    while (frontier.length) {
+      depth++;
+      const next = [];
+      for (const [cx, cy] of frontier) {
+        for (const d of DIRS) {
+          const nx = cx + d.x, ny = cy + d.y;
+          if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+          const k = kk(nx, ny);
+          if (seen.has(k) || blocked.has(k)) continue;
+          if (nx === to.x && ny === to.y) return depth;
+          seen.add(k); next.push([nx, ny]);
+        }
+      }
+      frontier = next;
+    }
+    return -1;
+  }
+
+  function floodCount(sx, sy, blocked) {
+    const seen = new Set([kk(sx, sy)]);
+    const stack = [[sx, sy]];
+    let count = 0;
+    while (stack.length) {
+      const [cx, cy] = stack.pop();
+      count++;
+      for (const d of DIRS) {
+        const nx = cx + d.x, ny = cy + d.y;
+        if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+        const k = kk(nx, ny);
+        if (seen.has(k) || blocked.has(k)) continue;
+        seen.add(k); stack.push([nx, ny]);
+      }
+    }
+    return count;
+  }
+
+  function chooseGreedy() {
+    const head = snake[0];
+    let best = null, bestScore = -Infinity;
+    for (const d of DIRS) {
+      if (d.x === -dir.x && d.y === -dir.y) continue; // 不能原地掉头
+      const nx = head.x + d.x, ny = head.y + d.y;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+      let hit = false;
+      for (let i = 0; i < snake.length - 1; i++) {
+        if (snake[i].x === nx && snake[i].y === ny) { hit = true; break; }
+      }
+      if (hit) continue;
+
+      const willEat = food && nx === food.x && ny === food.y;
+      const newSnake = willEat
+        ? [{ x: nx, y: ny }, ...snake]
+        : [{ x: nx, y: ny }, ...snake.slice(0, snake.length - 1)];
+      const blocked = new Set();
+      for (let i = 1; i < newSnake.length - 1; i++) blocked.add(kk(newSnake[i].x, newSnake[i].y));
+
+      let s = 0;
+      const df = food ? bfs({ x: nx, y: ny }, food, blocked) : -1;
+      const dt = bfs({ x: nx, y: ny }, newSnake[newSnake.length - 1], blocked);
+      if (dt < 0) s -= 200000;                  // 别把自己跟尾巴隔开
+      if (df >= 0) {
+        s += (400 - df) * 50;                   // 走离食物最短的路
+      } else {
+        s -= 100000;
+        if (dt >= 0) s -= dt * 20;              // 吃不到就先去追尾巴解缠
+      }
+      s += floodCount(nx, ny, blocked) * 8;     // 多留活动空间
+      if (s > bestScore) { bestScore = s; best = d; }
+    }
+    return best || dir;
+  }
+
+  // 自动模式入口：按当前策略选择方向
+  function chooseDirection() {
+    return strategy === 'greedy' ? chooseGreedy() : chooseHamilton();
   }
 
   function step() {
@@ -428,6 +543,24 @@
     if (auto) start();
   });
   updateAutoBtn();
+
+  // 策略切换：哈密顿回路 / 贪心寻路（切换后重开，保证从合法状态起跑）
+  function updateStratBtn() {
+    stratBtn.textContent = '策略：' + (strategy === 'greedy' ? '贪心' : '哈密顿');
+  }
+  stratBtn.addEventListener('click', () => {
+    strategy = strategy === 'greedy' ? 'ham' : 'greedy';
+    updateStratBtn();
+    if (auto) start();
+  });
+  updateStratBtn();
+
+  // AI 速度滑块
+  speedRange.addEventListener('input', () => {
+    aiSpeed = Number(speedRange.value);
+    speedVal.textContent = aiSpeed;
+    if (auto && state === 'running') speed = speedFor(score); // 立即生效
+  });
 
   // 移动端方向键
   [['pad-up', 0, -1], ['pad-down', 0, 1], ['pad-left', -1, 0], ['pad-right', 1, 0]]
