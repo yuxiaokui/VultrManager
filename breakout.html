@@ -105,7 +105,7 @@
     <canvas id="game" width="720" height="520"></canvas>
     <div class="overlay" id="overlay">
       <h1 id="title">打砖块</h1>
-      <p id="desc">移动鼠标 / 按 <kbd>←</kbd> <kbd>→</kbd> 控制挡板<br>接住小球，撞碎所有砖块即可进入下一关</p>
+      <p id="desc">移动鼠标 / 按 <kbd>←</kbd> <kbd>→</kbd> 控制挡板<br>接住小球，撞碎所有砖块即可进入下一关<br>灰色墙体不可摧毁，小球撞到会反弹</p>
       <button class="btn" id="startBtn">开始游戏</button>
     </div>
   </div>
@@ -154,6 +154,7 @@
     keys: { left: false, right: false },
     balls: [],
     bricks: [],
+    walls: [],
     particles: [],
     powerups: [],
   };
@@ -195,6 +196,60 @@
     return state.bricks.filter(b => b.alive).length;
   }
 
+  // ---------- 墙体（不可摧毁的障碍，撞到会反弹）----------
+  function wallLayouts() {
+    const midY = 336;
+    return [
+      // 1. 双立柱
+      () => {
+        const w = 22, h = 96;
+        return [
+          { x: W * 0.26, y: midY, w, h },
+          { x: W * 0.74 - w, y: midY, w, h },
+        ];
+      },
+      // 2. 中央横梁（两侧留通道）
+      () => {
+        const w = 210, h = 18, y = midY + 30;
+        return [{ x: (W - w) / 2, y, w, h }];
+      },
+      // 3. 双侧阶梯
+      () => {
+        const s = 46, y0 = 296;
+        return [
+          { x: W * 0.30, y: y0, w: s, h: s },
+          { x: W * 0.30 + s, y: y0 + s, w: s, h: s },
+          { x: W * 0.70 - s * 2, y: y0, w: s, h: s },
+          { x: W * 0.70 - s, y: y0 + s, w: s, h: s },
+        ];
+      },
+      // 4. 护盾，中间留缺口
+      () => {
+        const h = 20, y = midY + 24;
+        return [
+          { x: 84, y, w: 150, h },
+          { x: W - 234, y, w: 150, h },
+        ];
+      },
+      // 5. 中央菱形四点
+      () => {
+        const s = 34;
+        return [
+          { x: W / 2 - 122, y: midY + 4, w: s, h: s },
+          { x: W / 2 + 88, y: midY + 4, w: s, h: s },
+          { x: W / 2 - 17, y: midY - 32, w: s, h: s },
+          { x: W / 2 - 17, y: midY + 40, w: s, h: s },
+        ];
+      },
+    ];
+  }
+
+  function buildWalls() {
+    const layouts = wallLayouts();
+    const make = layouts[(state.level - 1) % layouts.length];
+    state.walls = make().map(r => ({ ...r }));
+  }
+
   // ---------- 生命周期 ----------
   function makeBall() {
     return {
@@ -216,6 +271,7 @@
 
   function startLevel() {
     buildBricks();
+    buildWalls();
     state.paddleX = (W - PADDLE.w) / 2;
     resetBall();
     elLevel.textContent = state.level;
@@ -284,7 +340,7 @@
     overlay.classList.remove('hidden');
     elTitle.className = '';
     elTitle.textContent = `第 ${state.level} 关`;
-    elDesc.innerHTML = '难度提升，砖块更结实了<br>点击继续';
+    elDesc.innerHTML = '砖块更结实，墙体布局也换了<br>点击继续';
     startBtn.textContent = '继续';
     state.running = false;
   }
@@ -362,19 +418,19 @@
     }
   }
 
-  // AABB vs 圆 —— 带最小分离轴的反弹
-  function resolveBrickCollision(ball, brick) {
+  // AABB vs 圆 —— 带最小分离轴的反弹（砖块与墙体共用）
+  function resolveRectCollision(ball, rect) {
     // 找圆心到矩形的最近点
-    const cx = Math.max(brick.x, Math.min(ball.x, brick.x + brick.w));
-    const cy = Math.max(brick.y, Math.min(ball.y, brick.y + brick.h));
+    const cx = Math.max(rect.x, Math.min(ball.x, rect.x + rect.w));
+    const cy = Math.max(rect.y, Math.min(ball.y, rect.y + rect.h));
     const dx = ball.x - cx;
     const dy = ball.y - cy;
     const dist2 = dx * dx + dy * dy;
     if (dist2 > ball.r * ball.r) return false;
 
     // 穿透深度最小的轴作为反弹法线
-    const overlapX = (brick.w / 2 + ball.r) - Math.abs(ball.x - (brick.x + brick.w / 2));
-    const overlapY = (brick.h / 2 + ball.r) - Math.abs(ball.y - (brick.y + brick.h / 2));
+    const overlapX = (rect.w / 2 + ball.r) - Math.abs(ball.x - (rect.x + rect.w / 2));
+    const overlapY = (rect.h / 2 + ball.r) - Math.abs(ball.y - (rect.y + rect.h / 2));
 
     if (overlapX < overlapY) {
       ball.vx = -ball.vx;
@@ -441,12 +497,19 @@
           bounceBallOffPaddle(ball);
         }
 
-        // 砖块
+        // 砖块与墙体（每小步最多处理一次碰撞）
+        let collided = false;
         for (const b of state.bricks) {
           if (!b.alive) continue;
-          if (resolveBrickCollision(ball, b)) {
+          if (resolveRectCollision(ball, b)) {
             hitBrick(b);
-            break; // 每小步只处理一次碰撞
+            collided = true;
+            break;
+          }
+        }
+        if (!collided) {
+          for (const wall of state.walls) {
+            if (resolveRectCollision(ball, wall)) break;
           }
         }
       }
@@ -552,6 +615,41 @@
         ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 4, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    // 墙体（不可摧毁）
+    for (const wall of state.walls) {
+      const g = ctx.createLinearGradient(wall.x, wall.y, wall.x, wall.y + wall.h);
+      g.addColorStop(0, '#5b6790');
+      g.addColorStop(0.5, '#3c456a');
+      g.addColorStop(1, '#2a3150');
+      ctx.fillStyle = g;
+      roundRect(wall.x, wall.y, wall.w, wall.h, 5);
+      ctx.fill();
+
+      // 斜向纹理
+      ctx.save();
+      ctx.beginPath();
+      roundRect(wall.x, wall.y, wall.w, wall.h, 5);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,.09)';
+      ctx.lineWidth = 2;
+      for (let d = -wall.h; d < wall.w; d += 10) {
+        ctx.beginPath();
+        ctx.moveTo(wall.x + d, wall.y);
+        ctx.lineTo(wall.x + d + wall.h, wall.y + wall.h);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // 边框与顶部高光
+      ctx.strokeStyle = 'rgba(160,180,240,.45)';
+      ctx.lineWidth = 1.5;
+      roundRect(wall.x + 0.75, wall.y + 0.75, wall.w - 1.5, wall.h - 1.5, 5);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      roundRect(wall.x + 2, wall.y + 2, wall.w - 4, 3, 2);
+      ctx.fill();
     }
 
     // 粒子
@@ -728,6 +826,7 @@
   // ---------- 初始化 ----------
   updateHUD();
   buildBricks();
+  buildWalls();
   requestAnimationFrame(loop);
 })();
 </script>
