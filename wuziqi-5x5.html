@@ -155,9 +155,9 @@
       <ul>
         <li>棋盘 <b>5×5</b>，双方各 <b>5 子</b>，摆满各自底线（黑方在下、红方在上）。</li>
         <li>黑方先行，每回合任选己方一子，向<b>上/下/左/右相邻空格走一格</b>。</li>
-        <li><b>吃子：</b>同一行或同一列中，若出现「己方 2 个连续的子紧挨着一枚敌方子」，且该行/列中<b>再无其他敌方子</b>，则该敌子被吃掉（如 <span class="k">我我敌</span> 或 <span class="k">敌我我</span>）。</li>
-        <li><b>己方满 3 子不能吃：</b>该行/列中己方棋子总数达到 <b>3 个及以上</b>时，本行/列不能吃对方（如 <span class="k">我我我敌</span>、<span class="k">我我敌我</span> 都不能吃）。</li>
-        <li><b>主动走上去的不算死：</b>本回合刚移动的那枚棋子不会被吃（哪怕它主动贴到对方两连子旁边）；只有没动的棋子被动挨着时才会被吃。</li>
+        <li><b>吃子（唯一方式）：</b>只有本回合<b>主动走出的</b> <span class="k">我我敌</span> 才能吃，需同时满足：①该行/列中<b>己方恰好 2 子、敌方恰好 1 子</b>（其余为空）；②按读取顺序（行：左→右；列：上→下）恰为 <span class="k">我我敌</span> —— 己方两子相连，敌方紧挨在其<b>后方</b>；③本回合移动的那枚棋子必须是这两枚己方子之一。</li>
+        <li>因此这些都<b>不能吃</b>：反向的 <span class="k">敌我我</span>、<span class="k">我我敌敌</span>（多一个敌子）、<span class="k">我我我敌</span>（己方 3 子）、以及靠"挪走己方子"露出来形成的局面。</li>
+        <li><b>主动走上去不算死：</b>只有走子的一方才能吃子，所以你主动贴上去的子不会被反吃；对方想吃掉它，必须在其回合主动走出一个 <span class="k">我我敌</span>。</li>
         <li><b>胜负：</b>被吃剩 <b>1 子</b>（或更少）的一方判负。</li>
         <li>若轮到某方走子却<b>无子可动</b>，该方判负。</li>
       </ul>
@@ -219,39 +219,40 @@
   }
 
   /* ---------- 吃子判定 ---------- */
+  // 唯一的吃子方式：本回合「主动走出的」我我敌。
+  // mover   : 本回合走子的一方（只有走子方能吃子）
+  // movedKey: 本回合刚移动的那枚棋子所在格（它必须属于那两枚己方子）
   // 返回 Map: 格子索引 -> 该格子上应被吃掉的棋子颜色
-  // immuneKey: 本回合刚移动的棋子所在格，主动走上去的这枚子不会被吃
-  function findCaptures(b, immuneKey){
-    var caps = new Map(), colors = [BLACK, RED];
+  function findCaptures(b, mover, movedKey){
+    var caps = new Map();
     LINES.forEach(function(line){
       var arr = line.map(function(p){ return b[p.r][p.c]; });
-      colors.forEach(function(M){
-        var E = other(M), idxs = [], i;
-        var ownCount = 0;
-        for(i=0;i<SIZE;i++){
-          if(arr[i] === E) idxs.push(i);
-          if(arr[i] === M) ownCount++;
+      var ownCount = 0, enemyCount = 0, i;
+      for(i=0;i<SIZE;i++){
+        if(arr[i] === mover) ownCount++;
+        else if(arr[i] !== null) enemyCount++;
+      }
+      // 该行/列必须恰好是「己方 2 子 + 敌方 1 子」，其余为空
+      if(ownCount !== 2 || enemyCount !== 1) return;
+      // 按读取顺序（行：左→右；列：上→下）必须恰为「我我敌」
+      for(i=0; i+2 < SIZE; i++){
+        if(arr[i] === mover && arr[i+1] === mover && arr[i+2] !== mover && arr[i+2] !== null){
+          var k0 = line[i].r * SIZE + line[i].c;
+          var k1 = line[i+1].r * SIZE + line[i+1].c;
+          // 必须是本回合主动走出形成的：移动的那枚子要在这两枚己方子之中
+          if(movedKey !== k0 && movedKey !== k1) return;
+          caps.set(line[i+2].r * SIZE + line[i+2].c, other(mover));
+          return;
         }
-        if(ownCount >= 3) return;              // 该行/列己方子达 3 个及以上，不能吃对方
-        if(idxs.length !== 1) return;          // 该行/列必须只有这一枚敌方子
-        var e = idxs[0];
-        var pairLeft  = (e-2 >= 0)   && arr[e-2] === M && arr[e-1] === M;
-        var pairRight = (e+2 < SIZE) && arr[e+1] === M && arr[e+2] === M;
-        if(pairLeft || pairRight){
-          var cell = line[e];
-          var key = cell.r * SIZE + cell.c;
-          if(key === immuneKey) return;        // 主动走上去的不算死
-          caps.set(key, E);
-        }
-      });
+      }
     });
     return caps;
   }
   // 反复结算直到稳定，返回被吃掉的棋子列表
-  function resolveCaptures(b, immuneKey){
+  function resolveCaptures(b, mover, movedKey){
     var removed = [];
     while(true){
-      var caps = findCaptures(b, immuneKey);
+      var caps = findCaptures(b, mover, movedKey);
       if(caps.size === 0) break;
       caps.forEach(function(color, key){
         var r = Math.floor(key / SIZE), c = key % SIZE;
@@ -345,7 +346,7 @@
     selected = null; legalTargets = [];
 
     var work = clone(board);
-    var removed = resolveCaptures(work, mv.to.r * SIZE + mv.to.c);
+    var removed = resolveCaptures(work, color, mv.to.r * SIZE + mv.to.c);
     capturedMark = new Set(removed.map(function(x){ return x.r * SIZE + x.c; }));
     msg = removed.length ? (name(color) + ' 吃掉 ' + name(other(color)) + ' ' + removed.length + ' 枚棋子！') : '';
     render();
@@ -395,8 +396,7 @@
       var nb = clone(b);
       nb[mv.to.r][mv.to.c] = color;
       nb[mv.from.r][mv.from.c] = null;
-      var gained = resolveCaptures(nb, mv.to.r * SIZE + mv.to.c)
-        .filter(function(x){ return x.color !== color; }).length;
+      var gained = resolveCaptures(nb, color, mv.to.r * SIZE + mv.to.c).length;
       if(gained > best) best = gained;
     });
     return best;
@@ -412,9 +412,9 @@
       b[mv.to.r][mv.to.c] = RED;
       b[mv.from.r][mv.from.c] = null;
 
-      var removed = resolveCaptures(b, mv.to.r * SIZE + mv.to.c);
-      var redLost = 0, blackLost = 0;
-      removed.forEach(function(x){ if(x.color === RED) redLost++; else blackLost++; });
+      var removed = resolveCaptures(b, RED, mv.to.r * SIZE + mv.to.c);
+      var blackLost = removed.length;   // 只有走子方能吃子，故被吃的必然是黑方
+      var redLost = 0;
 
       var rc = count(b, RED), bc = count(b, BLACK);
       if(bc <= 1 && rc > 1) { best = mv; bestScore = Infinity; return; }  // 直接取胜
