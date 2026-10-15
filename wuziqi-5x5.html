@@ -156,7 +156,7 @@
         <li>棋盘 <b>5×5</b>，双方各 <b>5 子</b>，摆满各自底线（黑方在下、红方在上）。</li>
         <li>黑方先行，每回合任选己方一子，向<b>上/下/左/右相邻空格走一格</b>。</li>
         <li><b>吃子：</b>同一行或同一列中，若出现「己方 2 个连续的子紧挨着一枚敌方子」，且该行/列中<b>再无其他敌方子</b>，则该敌子被吃掉（如 <span class="k">我我敌</span> 或 <span class="k">敌我我</span>）。</li>
-        <li>吃子为双向判定：走子后若形成对方符合条件的两连子，己方子同样会被吃。</li>
+        <li><b>主动走上去的不算死：</b>本回合刚移动的那枚棋子不会被吃（哪怕它主动贴到对方两连子旁边）；只有没动的棋子被动挨着时才会被吃。</li>
         <li><b>胜负：</b>被吃剩 <b>1 子</b>（或更少）的一方判负。</li>
         <li>若轮到某方走子却<b>无子可动</b>，该方判负。</li>
       </ul>
@@ -219,7 +219,8 @@
 
   /* ---------- 吃子判定 ---------- */
   // 返回 Map: 格子索引 -> 该格子上应被吃掉的棋子颜色
-  function findCaptures(b){
+  // immuneKey: 本回合刚移动的棋子所在格，主动走上去的这枚子不会被吃
+  function findCaptures(b, immuneKey){
     var caps = new Map(), colors = [BLACK, RED];
     LINES.forEach(function(line){
       var arr = line.map(function(p){ return b[p.r][p.c]; });
@@ -232,17 +233,19 @@
         var pairRight = (e+2 < SIZE) && arr[e+1] === M && arr[e+2] === M;
         if(pairLeft || pairRight){
           var cell = line[e];
-          caps.set(cell.r * SIZE + cell.c, E);
+          var key = cell.r * SIZE + cell.c;
+          if(key === immuneKey) return;        // 主动走上去的不算死
+          caps.set(key, E);
         }
       });
     });
     return caps;
   }
   // 反复结算直到稳定，返回被吃掉的棋子列表
-  function resolveCaptures(b){
+  function resolveCaptures(b, immuneKey){
     var removed = [];
     while(true){
-      var caps = findCaptures(b);
+      var caps = findCaptures(b, immuneKey);
       if(caps.size === 0) break;
       caps.forEach(function(color, key){
         var r = Math.floor(key / SIZE), c = key % SIZE;
@@ -336,7 +339,7 @@
     selected = null; legalTargets = [];
 
     var work = clone(board);
-    var removed = resolveCaptures(work);
+    var removed = resolveCaptures(work, mv.to.r * SIZE + mv.to.c);
     capturedMark = new Set(removed.map(function(x){ return x.r * SIZE + x.c; }));
     msg = removed.length ? (name(color) + ' 吃掉 ' + name(other(color)) + ' ' + removed.length + ' 枚棋子！') : '';
     render();
@@ -386,7 +389,8 @@
       var nb = clone(b);
       nb[mv.to.r][mv.to.c] = color;
       nb[mv.from.r][mv.from.c] = null;
-      var gained = resolveCaptures(nb).filter(function(x){ return x.color !== color; }).length;
+      var gained = resolveCaptures(nb, mv.to.r * SIZE + mv.to.c)
+        .filter(function(x){ return x.color !== color; }).length;
       if(gained > best) best = gained;
     });
     return best;
@@ -402,7 +406,7 @@
       b[mv.to.r][mv.to.c] = RED;
       b[mv.from.r][mv.from.c] = null;
 
-      var removed = resolveCaptures(b);
+      var removed = resolveCaptures(b, mv.to.r * SIZE + mv.to.c);
       var redLost = 0, blackLost = 0;
       removed.forEach(function(x){ if(x.color === RED) redLost++; else blackLost++; });
 
