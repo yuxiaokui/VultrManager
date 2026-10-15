@@ -156,6 +156,7 @@
         <li>棋盘 <b>5×5</b>，双方各 <b>5 子</b>，摆满各自底线（黑方在下、红方在上）。</li>
         <li>黑方先行，每回合任选己方一子，向<b>上/下/左/右相邻空格走一格</b>。</li>
         <li><b>吃子：</b>同一行或同一列中，若出现「己方 2 个连续的子紧挨着一枚敌方子」，且该行/列中<b>再无其他敌方子</b>，则该敌子被吃掉（如 <span class="k">我我敌</span> 或 <span class="k">敌我我</span>）。</li>
+        <li><b>己方满 3 子不能吃：</b>该行/列中己方棋子总数达到 <b>3 个及以上</b>时，本行/列不能吃对方（如 <span class="k">我我我敌</span>、<span class="k">我我敌我</span> 都不能吃）。</li>
         <li><b>主动走上去的不算死：</b>本回合刚移动的那枚棋子不会被吃（哪怕它主动贴到对方两连子旁边）；只有没动的棋子被动挨着时才会被吃。</li>
         <li><b>胜负：</b>被吃剩 <b>1 子</b>（或更少）的一方判负。</li>
         <li>若轮到某方走子却<b>无子可动</b>，该方判负。</li>
@@ -226,7 +227,12 @@
       var arr = line.map(function(p){ return b[p.r][p.c]; });
       colors.forEach(function(M){
         var E = other(M), idxs = [], i;
-        for(i=0;i<SIZE;i++) if(arr[i] === E) idxs.push(i);
+        var ownCount = 0;
+        for(i=0;i<SIZE;i++){
+          if(arr[i] === E) idxs.push(i);
+          if(arr[i] === M) ownCount++;
+        }
+        if(ownCount >= 3) return;              // 该行/列己方子达 3 个及以上，不能吃对方
         if(idxs.length !== 1) return;          // 该行/列必须只有这一枚敌方子
         var e = idxs[0];
         var pairLeft  = (e-2 >= 0)   && arr[e-2] === M && arr[e-1] === M;
